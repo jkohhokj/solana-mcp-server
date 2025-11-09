@@ -11,8 +11,15 @@ import {
 } from '@solana/web3.js';
 import { z } from "zod";
 import bs58 from 'bs58';
+import * as fs from 'fs';
+import * as path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import * as ts from 'typescript';
 
-const SOLANA_RPC = "https://api.mainnet-beta.solana.com";
+const execPromise = promisify(exec);
+
+const SOLANA_RPC = "https://api.devnet.solana.com";
 
 // Create server instance
 const server = new McpServer({
@@ -63,7 +70,7 @@ server.tool(
     try {
       const publicKey = new PublicKey(address);
       const balance = await connection.getBalance(publicKey);
-      const solBalance = balance / LAMPORTS_PER_SOL; // Using LAMPORTS_PER_SOL constant
+      const solBalance = balance / LAMPORTS_PER_SOL;
 
       return {
         content: [
@@ -95,18 +102,14 @@ server.tool(
   },
   async ({ secretKey }) => {
     try {
-      // Handle both base58 encoded strings and byte arrays
       let keypair: Keypair;
       try {
-        // First try parsing as comma-separated string
         const decoded = Uint8Array.from(secretKey.split(',').map(num => parseInt(num.trim())));
         keypair = Keypair.fromSecretKey(decoded);
       } catch {
-        // If that fails, try as a byte array string
         keypair = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(secretKey)));
       }
 
-      // Get account info and balance
       const publicKey = keypair.publicKey;
       const balance = await connection.getBalance(publicKey);
       const accountInfo = await connection.getAccountInfo(publicKey);
@@ -165,14 +168,12 @@ server.tool(
         };
       }
 
-      // Format the data based on encoding
       let formattedData: string;
       if (encoding === 'base58') {
         formattedData = bs58.encode(accountInfo.data);
       } else if (encoding === 'base64') {
         formattedData = Buffer.from(accountInfo.data).toString('base64');
       } else {
-        // For jsonParsed, we'll still return base64 but note that it's not parsed
         formattedData = Buffer.from(accountInfo.data).toString('base64');
       }
 
@@ -214,21 +215,16 @@ server.tool(
   },
   async ({ secretKey, toAddress, amount }) => {
     try {
-      // Parse the secret key and create keypair
       let fromKeypair: Keypair;
       try {
-        // First try parsing as comma-separated string
         const decoded = Uint8Array.from(secretKey.split(',').map(num => parseInt(num.trim())));
         fromKeypair = Keypair.fromSecretKey(decoded);
       } catch {
-        // If that fails, try as a JSON array string
         fromKeypair = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(secretKey)));
       }
 
-      // Convert SOL amount to lamports
       const lamports = amount * LAMPORTS_PER_SOL;
 
-      // Create transfer instruction
       const transaction = new Transaction().add(
         SystemProgram.transfer({
           fromPubkey: fromKeypair.publicKey,
@@ -237,7 +233,6 @@ server.tool(
         })
       );
 
-      // Send and confirm transaction
       const signature = await sendAndConfirmTransaction(
         connection,
         transaction,
@@ -253,7 +248,7 @@ From: ${fromKeypair.publicKey.toBase58()}
 To: ${toAddress}
 Amount: ${amount} SOL
 Transaction signature: ${signature}
-Explorer URL: https://explorer.solana.com/tx/${signature}`,
+Explorer URL: https://explorer.solana.com/tx/${signature}?cluster=devnet`,
           },
         ],
       };
@@ -271,10 +266,267 @@ Explorer URL: https://explorer.solana.com/tx/${signature}`,
   }
 );
 
+server.tool(
+  "requestAirdrop",
+  "Request SOL airdrop on devnet (for testing)",
+  {
+    address: z.string().describe("Recipient address"),
+    amount: z.number().min(0.1).max(5).describe("Amount of SOL to request (0.1-5)"),
+  },
+  async ({ address, amount }) => {
+    try {
+      const publicKey = new PublicKey(address);
+      const lamports = amount * LAMPORTS_PER_SOL;
+      
+      const signature = await connection.requestAirdrop(publicKey, lamports);
+      await connection.confirmTransaction(signature);
+
+      return {
+        content: [{
+          type: "text",
+          text: `Airdrop successful!\nAmount: ${amount} SOL\nRecipient: ${address}\nSignature: ${signature}`,
+        }],
+      };
+    } catch (err) {
+      const error = err as Error;
+      return {
+        content: [{
+          type: "text",
+          text: `Airdrop failed: ${error.message}`,
+        }],
+      };
+    }
+  }
+);
+
+// NEW: Anchor Test Suite Runner
+server.tool(
+  "runAnchorTests",
+  "Execute TypeScript test suite for Anchor programs. Creates a temporary test file, compiles and runs it against your Anchor program.",
+  {
+    testCode: z.string().describe("TypeScript test code to execute"),
+    programId: z.string().optional().describe("Program ID to test (optional, can be defined in test code)"),
+    workingDirectory: z.string().optional().describe("Working directory path (defaults to current directory)"),
+    testName: z.string().optional().default("anchor-test").describe("Name for the test file"),
+  },
+  async ({ testCode, programId, workingDirectory, testName }) => {
+    const tempDir = workingDirectory || process.cwd();
+    const testFileName = `${testName}-${Date.now()}.ts`;
+    const testFilePath = path.join(tempDir, testFileName);
+    const outputFileName = testFileName.replace('.ts', '.js');
+    const outputFilePath = path.join(tempDir, outputFileName);
+
+    try {
+      // Wrap test code with necessary imports and setup if not already present
+      let finalTestCode = testCode;
+      
+      // Check if imports are missing and add them
+      if (!testCode.includes('import * as anchor') && !testCode.includes('from "@coral-xyz/anchor"')) {
+        finalTestCode = `
+import * as anchor from "@coral-xyz/anchor";
+import { Program } from "@coral-xyz/anchor";
+import { Connection, PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
+import { assert } from "chai";
+
+${programId ? `const PROGRAM_ID = new PublicKey("${programId}");` : ''}
+
+${testCode}
+`;
+      }
+
+      // Write test file
+      fs.writeFileSync(testFilePath, finalTestCode, 'utf8');
+
+      // Compile TypeScript to JavaScript
+      const compileResult = ts.transpileModule(finalTestCode, {
+        compilerOptions: {
+          module: ts.ModuleKind.CommonJS,
+          target: ts.ScriptTarget.ES2020,
+          esModuleInterop: true,
+          skipLibCheck: true,
+          resolveJsonModule: true,
+        }
+      });
+
+      fs.writeFileSync(outputFilePath, compileResult.outputText, 'utf8');
+
+      // Execute the compiled JavaScript
+      const { stdout, stderr } = await execPromise(`node ${outputFilePath}`, {
+        cwd: tempDir,
+        env: {
+          ...process.env,
+          ANCHOR_PROVIDER_URL: SOLANA_RPC,
+          ANCHOR_WALLET: process.env.HOME ? path.join(process.env.HOME, '.config/solana/id.json') : '',
+        },
+        timeout: 60000, // 60 second timeout
+      });
+
+      // Clean up temporary files
+      try {
+        fs.unlinkSync(testFilePath);
+        fs.unlinkSync(outputFilePath);
+      } catch (cleanupErr) {
+        // Ignore cleanup errors
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✅ Anchor Test Execution Completed
+
+${programId ? `Program ID: ${programId}\n` : ''}
+📊 Test Output:
+${stdout || '(no stdout)'}
+
+${stderr ? `⚠️ Warnings/Errors:\n${stderr}` : ''}
+
+Test file: ${testFileName}
+Working directory: ${tempDir}`,
+          },
+        ],
+      };
+    } catch (err) {
+      const error = err as Error;
+      
+      // Clean up on error
+      try {
+        if (fs.existsSync(testFilePath)) fs.unlinkSync(testFilePath);
+        if (fs.existsSync(outputFilePath)) fs.unlinkSync(outputFilePath);
+      } catch (cleanupErr) {
+        // Ignore cleanup errors
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `❌ Test Execution Failed
+
+Error: ${error.message}
+
+${(error as any).stdout ? `Output:\n${(error as any).stdout}\n` : ''}
+${(error as any).stderr ? `Error Details:\n${(error as any).stderr}` : ''}
+
+Make sure:
+1. Anchor is installed (@coral-xyz/anchor)
+2. Your program is deployed
+3. Test code is valid TypeScript
+4. Required dependencies are available`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// NEW: Anchor Program Build Helper
+server.tool(
+  "buildAnchorProgram",
+  "Build an Anchor program in the specified directory",
+  {
+    projectPath: z.string().describe("Path to the Anchor project directory"),
+  },
+  async ({ projectPath }) => {
+    try {
+      const { stdout, stderr } = await execPromise('anchor build', {
+        cwd: projectPath,
+        timeout: 300000, // 5 minute timeout for builds
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✅ Anchor Build Completed
+
+Project: ${projectPath}
+
+📊 Build Output:
+${stdout}
+
+${stderr ? `⚠️ Warnings:\n${stderr}` : ''}`,
+          },
+        ],
+      };
+    } catch (err) {
+      const error = err as Error;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `❌ Build Failed
+
+Error: ${error.message}
+
+${(error as any).stdout ? `Output:\n${(error as any).stdout}\n` : ''}
+${(error as any).stderr ? `Error Details:\n${(error as any).stderr}` : ''}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// NEW: Deploy Anchor Program
+server.tool(
+  "deployAnchorProgram",
+  "Deploy an Anchor program to devnet or specified cluster",
+  {
+    projectPath: z.string().describe("Path to the Anchor project directory"),
+    cluster: z.enum(['devnet', 'testnet', 'mainnet-beta', 'localnet']).optional().default('devnet').describe("Cluster to deploy to"),
+  },
+  async ({ projectPath, cluster }) => {
+    try {
+      const { stdout, stderr } = await execPromise(`anchor deploy --provider.cluster ${cluster}`, {
+        cwd: projectPath,
+        timeout: 300000, // 5 minute timeout
+      });
+
+      // Try to extract program ID from output
+      const programIdMatch = stdout.match(/Program Id: ([A-Za-z0-9]{32,44})/);
+      const programId = programIdMatch ? programIdMatch[1] : null;
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✅ Deployment Completed
+
+Project: ${projectPath}
+Cluster: ${cluster}
+${programId ? `Program ID: ${programId}\n` : ''}
+📊 Deploy Output:
+${stdout}
+
+${stderr ? `⚠️ Warnings:\n${stderr}` : ''}
+${programId ? `\n🔗 Explorer: https://explorer.solana.com/address/${programId}?cluster=${cluster}` : ''}`,
+          },
+        ],
+      };
+    } catch (err) {
+      const error = err as Error;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `❌ Deployment Failed
+
+Error: ${error.message}
+
+${(error as any).stdout ? `Output:\n${(error as any).stdout}\n` : ''}
+${(error as any).stderr ? `Error Details:\n${(error as any).stderr}` : ''}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Solana MCP Server running on stdio");
+  console.error("Solana MCP Server with Anchor Test Suite running on stdio");
 }
 
 main().catch((err: unknown) => {
