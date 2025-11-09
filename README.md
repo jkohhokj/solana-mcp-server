@@ -5,10 +5,9 @@
 
 A Model-Context-Protocol server for interacting with the Solana blockchain. This server provides simple RPC endpoints for common Solana operations.
 
-<iframe src="https://claude.site/public/artifacts/4b6653b6-08ef-4bde-ae2d-417073c6ee37/embed" title="Claude Artifact" width="100%" height="600" frameborder="0" allow="clipboard-write" allowfullscreen></iframe>
+[Artifact Link](https://claude.ai/public/artifacts/4b6653b6-08ef-4bde-ae2d-417073c6ee37)
 
-[link](https://claude.ai/public/artifacts/4b6653b6-08ef-4bde-ae2d-417073c6ee37)
-
+![image](public/images/ss3.png)
 ![image](public/images/ss.png)
 ![image](public/images/ss1.png)
 ![image](public/images/ss2.png)
