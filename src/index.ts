@@ -458,7 +458,7 @@ server.tool(
     address: z.string().describe("A valid Solana public key (base58 format)"),
     limit: z
       .number()
-      .default(50)
+      .default(100)
       .describe("Number of recent transactions to fetch for analysis"),
   },
   async ({ address, limit }) => {
