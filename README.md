@@ -11,6 +11,8 @@ A Model-Context-Protocol server for interacting with the Solana blockchain. This
 ![image](public/images/ss.png)
 ![image](public/images/ss1.png)
 ![image](public/images/ss2.png)
+![image](public/images/ss4.png)
+
 
 
 ## Features
