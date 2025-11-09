@@ -9,6 +9,7 @@ import {
   sendAndConfirmTransaction,
   LAMPORTS_PER_SOL,
   clusterApiUrl,
+  ParsedAccountData,
 } from "@solana/web3.js";
 import { z } from "zod";
 import bs58 from "bs58";
@@ -457,119 +458,6 @@ Make sure:
   }
 );
 
-// // NEW: Anchor Program Build Helper
-// server.tool(
-//   "buildAnchorProgram",
-//   "Build an Anchor program in the specified directory",
-//   {
-//     projectPath: z.string().describe("Path to the Anchor project directory"),
-//   },
-//   async ({ projectPath }) => {
-//     try {
-//       const { stdout, stderr } = await execPromise("anchor build", {
-//         cwd: projectPath,
-//         timeout: 300000, // 5 minute timeout for builds
-//       });
-
-//       return {
-//         content: [
-//           {
-//             type: "text",
-//             text: `✅ Anchor Build Completed
-
-// Project: ${projectPath}
-
-// 📊 Build Output:
-// ${stdout}
-
-// ${stderr ? `⚠️ Warnings:\n${stderr}` : ""}`,
-//           },
-//         ],
-//       };
-//     } catch (err) {
-//       const error = err as Error;
-//       return {
-//         content: [
-//           {
-//             type: "text",
-//             text: `❌ Build Failed
-
-// Error: ${error.message}
-
-// ${(error as any).stdout ? `Output:\n${(error as any).stdout}\n` : ""}
-// ${(error as any).stderr ? `Error Details:\n${(error as any).stderr}` : ""}`,
-//           },
-//         ],
-//       };
-//     }
-//   }
-// );
-
-// // NEW: Deploy Anchor Program
-// server.tool(
-//   "deployAnchorProgram",
-//   "Deploy an Anchor program to devnet or specified cluster",
-//   {
-//     projectPath: z.string().describe("Path to the Anchor project directory"),
-//     cluster: z
-//       .enum(["devnet", "testnet", "mainnet-beta", "localnet"])
-//       .optional()
-//       .default("devnet")
-//       .describe("Cluster to deploy to"),
-//   },
-//   async ({ projectPath, cluster }) => {
-//     try {
-//       const { stdout, stderr } = await execPromise(
-//         `anchor deploy --provider.cluster ${cluster}`,
-//         {
-//           cwd: projectPath,
-//           timeout: 300000, // 5 minute timeout
-//         }
-//       );
-
-//       // Try to extract program ID from output
-//       const programIdMatch = stdout.match(/Program Id: ([A-Za-z0-9]{32,44})/);
-//       const programId = programIdMatch ? programIdMatch[1] : null;
-
-//       return {
-//         content: [
-//           {
-//             type: "text",
-//             text: `✅ Deployment Completed
-
-// Project: ${projectPath}
-// Cluster: ${cluster}
-// ${programId ? `Program ID: ${programId}\n` : ""}
-// 📊 Deploy Output:
-// ${stdout}
-
-// ${stderr ? `⚠️ Warnings:\n${stderr}` : ""}
-// ${
-//   programId
-//     ? `\n🔗 Explorer: https://explorer.solana.com/address/${programId}?cluster=${cluster}`
-//     : ""
-// }`,
-//           },
-//         ],
-//       };
-//     } catch (err) {
-//       const error = err as Error;
-//       return {
-//         content: [
-//           {
-//             type: "text",
-//             text: `❌ Deployment Failed
-
-// Error: ${error.message}
-
-// ${(error as any).stdout ? `Output:\n${(error as any).stdout}\n` : ""}
-// ${(error as any).stderr ? `Error Details:\n${(error as any).stderr}` : ""}`,
-//           },
-//         ],
-//       };
-//     }
-//   }
-// );
 
 // DATA ANALYTICS
 server.tool(
@@ -700,6 +588,89 @@ server.tool(
     }
   }
 );
+
+server.tool(
+  "getTokenAndStakeAccounts",
+  "Fetch SPL token accounts and staked SOL held by a given Solana address",
+  {
+    address: z.string().describe("A valid Solana public key (base58 format)"),
+  },
+  async ({ address }) => {
+    try {
+      const pubkey = new PublicKey(address);
+      const keyString = pubkey.toBase58();
+
+      // --- Fetch SPL Token Accounts ---
+      const tokenAccounts = await connection.getParsedTokenAccountsByOwner(pubkey, {
+        programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+      });
+
+      const tokenText =
+        tokenAccounts.value.length === 0
+          ? "No SPL token accounts found."
+          : tokenAccounts.value
+              .map((acc) => {
+                const parsedData = acc.account.data as ParsedAccountData;
+                const info = parsedData.parsed.info;
+                return `Token: ${info.mint}\nAmount: ${info.tokenAmount.uiAmountString}\n`;
+              })
+              .join("\n");
+
+      // --- Fetch Staked SOL Accounts ---
+      const stakeProgramId = new PublicKey("Stake11111111111111111111111111111111111111");
+      const stakeAccounts = await connection.getParsedProgramAccounts(stakeProgramId, {
+        filters: [
+          {
+            memcmp: {
+              offset: 12, // owner offset
+              bytes: keyString,
+            },
+          },
+        ],
+      });
+
+      let totalStaked = 0;
+      let stakeDetails = "";
+
+      for (const acc of stakeAccounts) {
+        // type guard: ensure parsed data
+        const parsedAccount = acc.account.data as ParsedAccountData;
+        if (parsedAccount?.program !== "stake") continue;
+
+        const info = parsedAccount.parsed.info;
+        const stakeData = info?.stake;
+        const delegated = stakeData?.delegation?.stake ?? 0;
+
+        totalStaked += delegated / 1e9; // convert lamports → SOL
+
+        stakeDetails += `Validator: ${stakeData.delegation.voter}\nStaked: ${(delegated / 1e9).toFixed(6)} SOL\n\n`;
+      }
+
+      if (!stakeDetails) stakeDetails = "No active stake accounts found.";
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✅ Account Summary for: ${keyString}\n\n--- SPL Tokens ---\n${tokenText}\n\n--- Staked SOL ---\n${stakeDetails}Total Staked: ${totalStaked.toFixed(6)} SOL`,
+          },
+        ],
+      };
+    } catch (err) {
+      const error = err as Error;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `❌ Failed to retrieve account info for address: ${address}\n\nError: ${error.message}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+
 
 server.tool(
   "getTxsLast24Hours",

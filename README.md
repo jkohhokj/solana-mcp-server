@@ -7,23 +7,20 @@ A Model-Context-Protocol server for interacting with the Solana blockchain. This
 
 ## Features
 
-| #  | Tool Name                   | Description                                                                    |
-| -- | --------------------------- | ------------------------------------------------------------------------------ |
-| 1  | **`getSlot`**               | Get the current Solana slot.                                                   |
-| 2  | **`getBalance`**            | Get balance for a Solana address.                                              |
-| 3  | **`getKeypairInfo`**        | Get information about a keypair from its secret key.                           |
-| 4  | **`getAccountInfo`**        | Get detailed account information for a Solana address.                         |
-| 5  | **`transfer`**              | Transfer SOL from one keypair to another address.                              |
-| 6  | **`requestAirdrop`**        | Request SOL airdrop on devnet (for testing).                                   |
-| 7  | **`getRecentTransactions`** | Fetch recent transactions for a Solana address on devnet.                      |
-| 8  | **`getTokenAccounts`**      | Fetch SPL token accounts held by a given Solana address.                       |
-| 9  | **`getTxsLast24Hours`**     | Analyze number of transactions for a Solana address in the past 24 hours.      |
-| 10 | **`detectAnomalies`**       | Detect potential anomalous activity for a Solana address in the past 24 hours. |
-| 11 | **`convertCurrency`**       | Convert between SOL and USD using live exchange rates.                         |
-| 12 | **`createWallet`**          | Generate a temporary devnet wallet with airdropped SOL for demo transactions.  |
-| 13 | **`faucet`**                | Request devnet SOL for an existing wallet.                                     |
-| 14 | **`runAnchorTests`**                | Run transactions                                     |
-
+- getSlot
+- getBalance
+- getKeypairInfo
+- getAccountInfo
+- transfer
+- requestAirdrop
+- runAnchorTests
+- getRecentTransactions
+- getTokenAccounts
+- getTokenAndStakeAccounts
+- getTxsLast24Hours
+- detectAnomalies
+- convertCurrency
+- createWallet
 
 ## Quickstart
 
@@ -65,7 +62,7 @@ add the tool to your claude_desktop_config.json
 add these preferences to Claude Desktop
 ```
 keep responses for the layperson, if there is deep technical jargon involved, make sure to explain it. if the prompt includes incorrect terminology explain the relevant blockchain terminology
-if the prompt implies basic functionality include: getslot, getbalance, getkeypairinfo (if applicable), getaccountinfo, convertcurrency of account balance
+if the prompt implies basic functionality include: getslot, getbalance, getkeypairinfo (if applicable), getaccountinfo, convertcurrency, gettokenandstakeaccounts of account balance
 if the prompt implies data/analysis/summary/history include visual artifacts if the prompt includes explaining/describing/visualizing include visual artifacts
 ```
 
@@ -116,23 +113,7 @@ C:\Users\jkohh\Downloads\project\anchor-tests
 5. Calculate discriminators from function names
 6. Return transaction signatures and verification links
 
-PROGRAM SOURCE CODE:
-
-// Imports we need
-use solana_program::{
-    account_info::AccountInfo, entrypoint, entrypoint::ProgramResult, msg, pubkey::Pubkey,
-};
-
-entrypoint!(process_instruction);
-
-pub fn process_instruction(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    instruction_data: &[u8],
-) -> ProgramResult {
-    msg!("Hello, World!");
-    Ok(())
-}
+ATTACH HELLO WORLD SOURCE CODE
 ```
 ```
 describe the program called
@@ -178,6 +159,8 @@ Requirements:
 Working directory: C:\Users\jkohh\Downloads\project\anchor-tests
 
 run the test and validate the response
+
+ATTACH THE BANK SOURCE CODE
 ```
 
 ## RPC Endpoint
