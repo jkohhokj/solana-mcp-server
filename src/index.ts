@@ -321,6 +321,256 @@ server.tool(
   }
 );
 
+// NEW: Anchor Test Suite Runner
+server.tool(
+  "runAnchorTests",
+  "Execute TypeScript test suite for Anchor programs. Creates a temporary test file, compiles and runs it against your Anchor program.",
+  {
+    testCode: z.string().describe("TypeScript test code to execute"),
+    programId: z
+      .string()
+      .optional()
+      .describe("Program ID to test (optional, can be defined in test code)"),
+    workingDirectory: z
+      .string()
+      .optional()
+      .describe("Working directory path (defaults to current directory)"),
+    testName: z
+      .string()
+      .optional()
+      .default("anchor-test")
+      .describe("Name for the test file"),
+  },
+  async ({ testCode, programId, workingDirectory, testName }) => {
+    const tempDir = workingDirectory || process.cwd();
+    const testFileName = `${testName}-${Date.now()}.ts`;
+    const testFilePath = path.join(tempDir, testFileName);
+    const outputFileName = testFileName.replace(".ts", ".js");
+    const outputFilePath = path.join(tempDir, outputFileName);
+
+    try {
+      // Wrap test code with necessary imports and setup if not already present
+      let finalTestCode = testCode;
+
+      // Check if imports are missing and add them
+      if (
+        !testCode.includes("import * as anchor") &&
+        !testCode.includes('from "@coral-xyz/anchor"')
+      ) {
+        finalTestCode = `
+import * as anchor from "@coral-xyz/anchor";
+import { Program } from "@coral-xyz/anchor";
+import { Connection, PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
+import { assert } from "chai";
+
+${programId ? `const PROGRAM_ID = new PublicKey("${programId}");` : ""}
+
+${testCode}
+`;
+      }
+
+      // Write test file
+      fs.writeFileSync(testFilePath, finalTestCode, "utf8");
+
+      // Compile TypeScript to JavaScript
+      const compileResult = ts.transpileModule(finalTestCode, {
+        compilerOptions: {
+          module: ts.ModuleKind.CommonJS,
+          target: ts.ScriptTarget.ES2020,
+          esModuleInterop: true,
+          skipLibCheck: true,
+          resolveJsonModule: true,
+        },
+      });
+
+      fs.writeFileSync(outputFilePath, compileResult.outputText, "utf8");
+
+      // Execute the compiled JavaScript
+      const { stdout, stderr } = await execPromise(`node ${outputFilePath}`, {
+        cwd: tempDir,
+        env: {
+          ...process.env,
+          ANCHOR_PROVIDER_URL: SOLANA_RPC,
+          ANCHOR_WALLET: process.env.HOME
+            ? path.join(process.env.HOME, ".config/solana/id.json")
+            : "",
+        },
+        timeout: 60000, // 60 second timeout
+      });
+
+      // Clean up temporary files
+      try {
+        fs.unlinkSync(testFilePath);
+        fs.unlinkSync(outputFilePath);
+      } catch (cleanupErr) {
+        // Ignore cleanup errors
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✅ Anchor Test Execution Completed
+
+${programId ? `Program ID: ${programId}\n` : ""}
+📊 Test Output:
+${stdout || "(no stdout)"}
+
+${stderr ? `⚠️ Warnings/Errors:\n${stderr}` : ""}
+
+Test file: ${testFileName}
+Working directory: ${tempDir}`,
+          },
+        ],
+      };
+    } catch (err) {
+      const error = err as Error;
+
+      // Clean up on error
+      try {
+        if (fs.existsSync(testFilePath)) fs.unlinkSync(testFilePath);
+        if (fs.existsSync(outputFilePath)) fs.unlinkSync(outputFilePath);
+      } catch (cleanupErr) {
+        // Ignore cleanup errors
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `❌ Test Execution Failed
+
+Error: ${error.message}
+
+${(error as any).stdout ? `Output:\n${(error as any).stdout}\n` : ""}
+${(error as any).stderr ? `Error Details:\n${(error as any).stderr}` : ""}
+
+Make sure:
+1. Anchor is installed (@coral-xyz/anchor)
+2. Your program is deployed
+3. Test code is valid TypeScript
+4. Required dependencies are available`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// // NEW: Anchor Program Build Helper
+// server.tool(
+//   "buildAnchorProgram",
+//   "Build an Anchor program in the specified directory",
+//   {
+//     projectPath: z.string().describe("Path to the Anchor project directory"),
+//   },
+//   async ({ projectPath }) => {
+//     try {
+//       const { stdout, stderr } = await execPromise("anchor build", {
+//         cwd: projectPath,
+//         timeout: 300000, // 5 minute timeout for builds
+//       });
+
+//       return {
+//         content: [
+//           {
+//             type: "text",
+//             text: `✅ Anchor Build Completed
+
+// Project: ${projectPath}
+
+// 📊 Build Output:
+// ${stdout}
+
+// ${stderr ? `⚠️ Warnings:\n${stderr}` : ""}`,
+//           },
+//         ],
+//       };
+//     } catch (err) {
+//       const error = err as Error;
+//       return {
+//         content: [
+//           {
+//             type: "text",
+//             text: `❌ Build Failed
+
+// Error: ${error.message}
+
+// ${(error as any).stdout ? `Output:\n${(error as any).stdout}\n` : ""}
+// ${(error as any).stderr ? `Error Details:\n${(error as any).stderr}` : ""}`,
+//           },
+//         ],
+//       };
+//     }
+//   }
+// );
+
+// // NEW: Deploy Anchor Program
+// server.tool(
+//   "deployAnchorProgram",
+//   "Deploy an Anchor program to devnet or specified cluster",
+//   {
+//     projectPath: z.string().describe("Path to the Anchor project directory"),
+//     cluster: z
+//       .enum(["devnet", "testnet", "mainnet-beta", "localnet"])
+//       .optional()
+//       .default("devnet")
+//       .describe("Cluster to deploy to"),
+//   },
+//   async ({ projectPath, cluster }) => {
+//     try {
+//       const { stdout, stderr } = await execPromise(
+//         `anchor deploy --provider.cluster ${cluster}`,
+//         {
+//           cwd: projectPath,
+//           timeout: 300000, // 5 minute timeout
+//         }
+//       );
+
+//       // Try to extract program ID from output
+//       const programIdMatch = stdout.match(/Program Id: ([A-Za-z0-9]{32,44})/);
+//       const programId = programIdMatch ? programIdMatch[1] : null;
+
+//       return {
+//         content: [
+//           {
+//             type: "text",
+//             text: `✅ Deployment Completed
+
+// Project: ${projectPath}
+// Cluster: ${cluster}
+// ${programId ? `Program ID: ${programId}\n` : ""}
+// 📊 Deploy Output:
+// ${stdout}
+
+// ${stderr ? `⚠️ Warnings:\n${stderr}` : ""}
+// ${
+//   programId
+//     ? `\n🔗 Explorer: https://explorer.solana.com/address/${programId}?cluster=${cluster}`
+//     : ""
+// }`,
+//           },
+//         ],
+//       };
+//     } catch (err) {
+//       const error = err as Error;
+//       return {
+//         content: [
+//           {
+//             type: "text",
+//             text: `❌ Deployment Failed
+
+// Error: ${error.message}
+
+// ${(error as any).stdout ? `Output:\n${(error as any).stdout}\n` : ""}
+// ${(error as any).stderr ? `Error Details:\n${(error as any).stderr}` : ""}`,
+//           },
+//         ],
+//       };
+//     }
+//   }
+// );
+
 // DATA ANALYTICS
 server.tool(
   "getRecentTransactions",
@@ -458,7 +708,7 @@ server.tool(
     address: z.string().describe("A valid Solana public key (base58 format)"),
     limit: z
       .number()
-      .default(100)
+      .default(50)
       .describe("Number of recent transactions to fetch for analysis"),
   },
   async ({ address, limit }) => {
@@ -745,49 +995,6 @@ server.tool(
   }
 );
 
-server.tool(
-  "faucet",
-  "Request devnet SOL for an existing wallet",
-  {
-    address: z.string().describe("Wallet address (base58) to receive devnet SOL"),
-    amount: z
-      .number()
-      .optional()
-      .default(2)
-      .describe("Amount of SOL to airdrop (default 2 SOL)"),
-  },
-  async ({ address, amount }) => {
-    try {
-      const pubkey = new PublicKey(address);
-      const devnetConnection = new Connection(clusterApiUrl("devnet"), "confirmed");
-
-      // Request airdrop
-      const sig = await devnetConnection.requestAirdrop(pubkey, amount * 1e9);
-
-      // Confirm transaction
-      await devnetConnection.confirmTransaction(sig, "confirmed");
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `💧 Devnet SOL Airdrop Requested!\n\nWallet: ${address}\nAmount: ${amount} SOL\nTransaction Signature: ${sig}`,
-          },
-        ],
-      };
-    } catch (err) {
-      const error = err as Error;
-      return {
-        content: [
-          {
-            type: "text",
-            text: `❌ Failed to airdrop devnet SOL to ${address}\nError: ${error.message}`,
-          },
-        ],
-      };
-    }
-  }
-);
 
 
 async function main() {
