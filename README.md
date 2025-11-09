@@ -1,3 +1,14 @@
+
+Setup steps:
+
+    #Download Claud
+    After copying the repository, get the file path
+
+
+
+
+
+
 # Solana MCP Server
 
 A Model-Context-Protocol server for interacting with the Solana blockchain. This server provides simple RPC endpoints for common Solana operations.
@@ -31,10 +42,12 @@ add the tool to your claude_desktop_config.json
 "solana-rpc": {
             "command": "node",
             "args": [
-                "/PATH/TO/solana-mcp-server/build/index.js"
+                "/PATH/TO/solana-mcp-server/build/index.js" (file path to copied repo)
             ]
         }
 ```
+
+Then run your prompt "use private (key to Solona wallet) get keypair info using mcp.
 
 ## Usage
 
