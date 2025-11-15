@@ -7,6 +7,8 @@ A Model-Context-Protocol server for interacting with the Solana blockchain. This
 
 [Data Analytics Dashboard](https://claude.ai/public/artifacts/4b6653b6-08ef-4bde-ae2d-417073c6ee37)
 
+[DevPost Link](https://devpost.com/software/solanablockchainmcp)
+
 ## Featured Demos
 
 ![image](public/images/ss3.png)
